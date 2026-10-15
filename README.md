@@ -8,12 +8,14 @@ Canonical PC↔Mac LAN bridge (shared codebase).
 - **Job plane** (same port): `locate` | `fetch_path` | `gitlab_fetch` | `agent_prompt`
 - **GitLab**: Mac only (SSH to `gitlab.futunn.com`). PC uses `lanbridge gitlab ...` which creates a job on Mac.
 
-## Origin remote
+## Git remote (canonical)
 
-- Repo: `futu/lan-bridge`
-- Clone: `https://origin.cursor.com/futu/lan-bridge.git`
+- `https://github.com/pengdafu/lan-bridge.git`
 
-PC (Windows) cannot use Origin CLI yet — Mac should push/pull this remote after syncing from the zip bootstrap.
+```bash
+git clone https://github.com/pengdafu/lan-bridge.git ~/lan-bridge
+# or: git pull --rebase origin main
+```
 
 ## Install (either machine)
 
