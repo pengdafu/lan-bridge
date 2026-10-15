@@ -76,28 +76,63 @@ function handleGitlab() {
   throw new Error("gitlab_fetch not supported on PC — use peer mac");
 }
 
+function resolveAgentBin() {
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  const candidates =
+    process.platform === "win32"
+      ? ["agent.cmd", "agent", "cursor-agent"]
+      : [
+          "agent",
+          "cursor-agent",
+          path.join(home, ".local/bin/agent"),
+          path.join(home, ".local/bin/cursor-agent"),
+        ];
+  for (const b of candidates) {
+    if (b.includes("/") || b.includes("\\")) {
+      if (!fs.existsSync(b)) continue;
+      return b;
+    }
+    // Only accept real success — stderr from "command not found" must NOT count.
+    const r = spawnSync(b, ["--help"], {
+      shell: process.platform === "win32",
+      encoding: "utf8",
+      env: process.env,
+    });
+    if (r.status === 0) return b;
+  }
+  return null;
+}
+
 function handleAgentPrompt(job) {
   const prompt = job.prompt || job.query;
   if (!prompt) throw new Error("prompt required");
   const work = path.join(ROOT, "work", job.id);
   fs.mkdirSync(work, { recursive: true });
-  const agentBin = ["agent.cmd", "agent", "cursor-agent"].find((b) => {
-    const r = spawnSync(b, ["--help"], { shell: true, encoding: "utf8" });
-    return r.status === 0 || (r.stdout || r.stderr);
-  });
+  const agentBin = resolveAgentBin();
   if (!agentBin) {
     const note = path.join(jobs.resultsRoot(ROOT, cfg), job.id, "NOTE.txt");
     fs.mkdirSync(path.dirname(note), { recursive: true });
-    fs.writeFileSync(note, "agent CLI not found on PC. Prompt was:\n" + prompt + "\n");
+    fs.writeFileSync(
+      note,
+      "agent CLI not found. Prompt was:\n" + prompt + "\nPATH=" + (process.env.PATH || "") + "\n"
+    );
     return [`jobs/${job.id}/NOTE.txt`];
   }
   const r = spawnSync(
     agentBin,
     ["-p", "--trust", "--workspace", work, "--force", prompt],
-    { encoding: "utf8", shell: true, timeout: (job.timeout_sec || 600) * 1000 }
+    {
+      encoding: "utf8",
+      shell: process.platform === "win32",
+      timeout: (job.timeout_sec || 600) * 1000,
+      env: process.env,
+    }
   );
   const out = path.join(jobs.resultsRoot(ROOT, cfg), job.id, "agent-stdout.txt");
-  fs.writeFileSync(out, (r.stdout || "") + "\n" + (r.stderr || ""));
+  fs.writeFileSync(
+    out,
+    `bin=${agentBin}\nstatus=${r.status}\n` + (r.stdout || "") + "\n" + (r.stderr || "")
+  );
   return [`jobs/${job.id}/agent-stdout.txt`];
 }
 

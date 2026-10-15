@@ -10,3 +10,4 @@ config.json
 *.log
 *.partial
 .DS_Store
+.cursor_api_key
