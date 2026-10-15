@@ -1,6 +1,8 @@
 {
   "role": "pc",
   "port": 8766,
+  "hubPort": 8765,
+  "hubRole": "pc",
   "token": "agent-lan-2026",
   "bind": "0.0.0.0",
   "allowCidr": ["192.168.0.0/16", "127.0.0.1/32"],

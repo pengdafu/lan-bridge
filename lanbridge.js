@@ -25,8 +25,23 @@ Usage:
   lanbridge locate <peer> <query>
   lanbridge ask <peer> "<prompt>"
   lanbridge gitlab <repo> <path> [--ref <branch>] [--peer mac]
+  lanbridge meet                 # check/register with agent hub
+  lanbridge say <peer> <text> [--expect-reply]
+  lanbridge inbox                # read unread agent mailbox (no wait)
+  lanbridge watch [--timeout 60] # ONLY if human asked you to wait
   lanbridge doctor
+
+Anti-deadlock: never both agents park. Prefer say+inbox over watch.
 `);
+}
+
+function hubBase(cfg) {
+  const host =
+    cfg.hubHost ||
+    (cfg.peers[cfg.hubRole || "pc"] && cfg.peers[cfg.hubRole || "pc"].host) ||
+    "127.0.0.1";
+  const port = cfg.hubPort || 8765;
+  return `http://${host}:${port}`;
 }
 
 function request(method, urlStr, { headers = {}, body = null, outPath = null } = {}) {
@@ -263,6 +278,106 @@ async function cmdGitlab(cfg, args) {
   if (done.status !== "done") process.exit(1);
 }
 
+async function cmdMeet(cfg) {
+  const url = `${hubBase(cfg)}/health`;
+  try {
+    const h = await request("GET", url);
+    console.log(
+      JSON.stringify(
+        {
+          ok: h.status === 200,
+          hub: h.json,
+          hubUrl: hubBase(cfg),
+          tip: "Hub is mailbox+WS. Do not mutual-wait; use say/inbox.",
+        },
+        null,
+        2
+      )
+    );
+    if (h.status !== 200) process.exit(1);
+  } catch (e) {
+    console.error(
+      JSON.stringify(
+        {
+          ok: false,
+          error: String(e.message || e),
+          hint:
+            cfg.role === (cfg.hubRole || "pc")
+              ? "Start hub: node hub.js (or Startup script)"
+              : `Ask ${cfg.hubRole || "pc"} to start hub on :${cfg.hubPort || 8765}`,
+        },
+        null,
+        2
+      )
+    );
+    process.exit(1);
+  }
+}
+
+async function cmdSay(cfg, args) {
+  const peer = args[0];
+  const expect = args.includes("--expect-reply");
+  const text = args
+    .slice(1)
+    .filter((a) => a !== "--expect-reply")
+    .join(" ")
+    .trim();
+  if (!peer || !text) {
+    usage();
+    process.exit(1);
+  }
+  const payload = JSON.stringify({
+    from: cfg.role,
+    to: peer,
+    text,
+    expect_reply: expect,
+  });
+  const r = await request("POST", `${hubBase(cfg)}/say`, {
+    headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) },
+    body: payload,
+  });
+  console.log(JSON.stringify({ ok: r.status === 200, result: r.json, parked: false }, null, 2));
+  if (r.status !== 200) process.exit(1);
+  // Never park here — anti-deadlock
+}
+
+async function cmdInbox(cfg) {
+  const r = await request("GET", `${hubBase(cfg)}/mailbox?for=${encodeURIComponent(cfg.role)}`);
+  console.log(JSON.stringify(r.json || { ok: false, status: r.status }, null, 2));
+  if (r.status !== 200) process.exit(1);
+}
+
+async function cmdWatch(cfg, args) {
+  let timeout = 60;
+  const tIdx = args.indexOf("--timeout");
+  if (tIdx >= 0) timeout = Number(args[tIdx + 1] || 60);
+  console.error(
+    JSON.stringify({
+      warning: "watch parks THIS agent only. Peer must NOT also watch. Prefer inbox.",
+      timeout_sec: timeout,
+    })
+  );
+  const deadline = Date.now() + timeout * 1000;
+  let last = "";
+  while (Date.now() < deadline) {
+    const r = await request(
+      "GET",
+      `${hubBase(cfg)}/mailbox?for=${encodeURIComponent(cfg.role)}&since=${encodeURIComponent(last)}&mark=0`
+    );
+    const msgs = (r.json && r.json.messages) || [];
+    if (msgs.length) {
+      last = msgs[msgs.length - 1].ts;
+      // mark by reading normally
+      await request("GET", `${hubBase(cfg)}/mailbox?for=${encodeURIComponent(cfg.role)}`);
+      console.log(JSON.stringify({ ok: true, messages: msgs }, null, 2));
+      return;
+    }
+    await sleep(1500);
+  }
+  console.log(JSON.stringify({ ok: false, error: "watch timeout", tip: "Do not restart a peer watch loop" }, null, 2));
+  process.exit(1);
+}
+
 async function cmdDoctor(cfg) {
   const report = { checks: [] };
   const push = (name, ok, detail) => report.checks.push({ name, ok, detail });
@@ -273,6 +388,12 @@ async function cmdDoctor(cfg) {
     push("local_daemon", h.status === 200 && !!(h.json && h.json.jobs), h.json);
   } catch (e) {
     push("local_daemon", false, String(e.message || e));
+  }
+  try {
+    const h = await request("GET", `${hubBase(cfg)}/health`);
+    push("hub", h.status === 200, h.json);
+  } catch (e) {
+    push("hub", false, String(e.message || e));
   }
   for (const name of Object.keys(cfg.peers)) {
     if (name === cfg.role) continue;
@@ -323,6 +444,18 @@ async function main() {
       break;
     case "gitlab":
       await cmdGitlab(cfg, args);
+      break;
+    case "meet":
+      await cmdMeet(cfg);
+      break;
+    case "say":
+      await cmdSay(cfg, args);
+      break;
+    case "inbox":
+      await cmdInbox(cfg);
+      break;
+    case "watch":
+      await cmdWatch(cfg, args);
       break;
     case "doctor":
       await cmdDoctor(cfg);

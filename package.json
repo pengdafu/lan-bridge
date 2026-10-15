@@ -1,13 +1,17 @@
 {
   "name": "lan-bridge",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
-  "description": "PC↔Mac LAN file + job bridge",
+  "description": "PC↔Mac LAN file + job + agent meet hub",
   "main": "daemon.js",
   "scripts": {
     "daemon": "node daemon.js",
     "worker": "node worker.js",
+    "hub": "node hub.js",
     "cli": "node lanbridge.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
   },
   "engines": {
     "node": ">=18"

@@ -4,6 +4,8 @@ outbox/
 work/
 jobs-meta/
 logs/
+mailbox.jsonl
+mailbox-cursors/
 config.json
 *.log
 *.partial
