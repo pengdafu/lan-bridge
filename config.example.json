@@ -1,0 +1,13 @@
+{
+  "role": "pc",
+  "port": 8766,
+  "token": "agent-lan-2026",
+  "bind": "0.0.0.0",
+  "allowCidr": ["192.168.0.0/16", "127.0.0.1/32"],
+  "peers": {
+    "pc": { "host": "192.168.31.139", "port": 8766 },
+    "mac": { "host": "192.168.31.92", "port": 8766 }
+  },
+  "inbox": "inbox",
+  "outbox": "outbox"
+}

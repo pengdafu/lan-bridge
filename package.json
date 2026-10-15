@@ -1,0 +1,15 @@
+{
+  "name": "lan-bridge",
+  "version": "2.0.0",
+  "private": true,
+  "description": "PC↔Mac LAN file + job bridge",
+  "main": "daemon.js",
+  "scripts": {
+    "daemon": "node daemon.js",
+    "worker": "node worker.js",
+    "cli": "node lanbridge.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

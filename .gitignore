@@ -1,0 +1,10 @@
+node_modules/
+inbox/
+outbox/
+work/
+jobs-meta/
+logs/
+config.json
+*.log
+*.partial
+.DS_Store
