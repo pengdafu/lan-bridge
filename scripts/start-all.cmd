@@ -1,5 +1,3 @@
 @echo off
-cd /d "%USERPROFILE%\lan-bridge"
-start "lan-bridge-daemon" /MIN node daemon.js
-start "lan-bridge-worker" /MIN node worker.js
-start "lan-bridge-hub" /MIN node hub.js
+REM Hidden background start (no taskbar consoles). Uses start-hidden.vbs
+cscript //nologo "%~dp0start-hidden.vbs"
