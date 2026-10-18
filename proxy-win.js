@@ -67,10 +67,14 @@ async function proxyOn(cfg) {
     };
   }
 
+  // Bypass LAN + common public git hosts so proxy-on does not break GitHub push
+  const bypass =
+    "localhost;127.*;10.*;192.168.*;<local>;github.com;*.github.com;githubusercontent.com;*.githubusercontent.com";
   const ie = ps(`
 $path = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'
 Set-ItemProperty -Path $path -Name ProxyEnable -Value 1 -Type DWord
 Set-ItemProperty -Path $path -Name ProxyServer -Value '${t.ie}'
+Set-ItemProperty -Path $path -Name ProxyOverride -Value '${bypass}'
 # refresh WinINet
 Add-Type -Namespace I -Name WinINet -MemberDefinition @'
 [DllImport("wininet.dll", SetLastError=true)]
