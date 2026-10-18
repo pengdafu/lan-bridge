@@ -242,31 +242,49 @@ Set-ItemProperty -Path $path -Name AutoConfigURL -Value '${pacInfo.url}'
     };
   }
 
-  // Default: ALL HTTP(S) via Mac. Do NOT bypass 10.* — that is company intranet.
-  // Only keep home LAN + loopback direct so lan-bridge / printer still work.
-  const bypass = "localhost;127.*;192.168.*;<local>";
-  ps(`
-$path = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'
-Set-ItemProperty -Path $path -Name ProxyEnable -Value 1 -Type DWord
-Set-ItemProperty -Path $path -Name ProxyServer -Value '${t.ieHttp}'
-Set-ItemProperty -Path $path -Name ProxyOverride -Value '${bypass}'
-Remove-ItemProperty -Path $path -Name AutoConfigURL -ErrorAction SilentlyContinue
-`);
-  refreshWinInet();
-  setUserEnv("HTTP_PROXY", t.httpUrl);
-  setUserEnv("HTTPS_PROXY", t.httpUrl);
-  setUserEnv("ALL_PROXY", t.url);
-  setUserEnv("all_proxy", t.url);
-  setUserEnv("NO_PROXY", "localhost,127.0.0.1,192.168.0.0/16");
-  setUserEnv("no_proxy", "localhost,127.0.0.1,192.168.0.0/16");
-
-  // TUN first (true global). Fallback: TCP SOCKS relays + optional route add.
+  // TUN first (true global). Fallback: WinINET HTTP + env + TCP relays.
   let tun = { ok: false, skipped: true };
   try {
     tun = await tunWin.startTun(cfg);
   } catch (e) {
     tun = { ok: false, error: String(e && e.message ? e.message : e) };
   }
+
+  const bypass = "localhost;127.*;192.168.*;<local>";
+  if (tun.ok) {
+    // TUN already covers all TCP — do NOT set ALL_PROXY=socks5 / HTTP_PROXY.
+    // Those break Cursor/Electron/Node (socks env poorly supported) and look like "no network".
+    ps(`
+$path = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'
+Set-ItemProperty -Path $path -Name ProxyEnable -Value 0 -Type DWord
+Remove-ItemProperty -Path $path -Name ProxyServer -ErrorAction SilentlyContinue
+Remove-ItemProperty -Path $path -Name AutoConfigURL -ErrorAction SilentlyContinue
+`);
+    refreshWinInet();
+    setUserEnv("HTTP_PROXY", "");
+    setUserEnv("HTTPS_PROXY", "");
+    setUserEnv("ALL_PROXY", "");
+    setUserEnv("all_proxy", "");
+    setUserEnv("NO_PROXY", "");
+    setUserEnv("no_proxy", "");
+  } else {
+    ps(`
+$path = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'
+Set-ItemProperty -Path $path -Name ProxyEnable -Value 1 -Type DWord
+Set-ItemProperty -Path $path -Name ProxyServer -Value '${t.ieHttp}'
+Set-ItemProperty -Path $path -Name ProxyOverride -Value '${bypass}'
+Remove-ItemProperty -Path $path -Name AutoConfigURL -ErrorAction SilentlyContinue
+`);
+    refreshWinInet();
+    // HTTP proxy only — never ALL_PROXY=socks5 (breaks Electron/Cursor).
+    setUserEnv("HTTP_PROXY", t.httpUrl);
+    setUserEnv("HTTPS_PROXY", t.httpUrl);
+    setUserEnv("ALL_PROXY", "");
+    setUserEnv("all_proxy", "");
+    setUserEnv("NO_PROXY", "localhost,127.0.0.1,192.168.0.0/16");
+    setUserEnv("no_proxy", "localhost,127.0.0.1,192.168.0.0/16");
+  }
+
   const relay = tcpRelay.startRelayDetached();
   const routes = addTcpRoutes(cfg, t.host);
   const forwards = tcpRelay.defaultForwards(cfg);
@@ -280,10 +298,10 @@ Remove-ItemProperty -Path $path -Name AutoConfigURL -ErrorAction SilentlyContinu
     tcpForwards: forwards,
     tcpRoutes: routes,
     note: tun.ok
-      ? "TUN up: Node/Electron/MySQL/browser all via Mac SOCKS. Accept UAC if prompted. Restart Cortex after proxy on."
-      : `TUN failed (${tun.error || "unknown"}); fallback HTTP+TCP relay 127.0.0.1:${
+      ? "TUN up (no HTTP_PROXY/ALL_PROXY — safe for Cursor). Restart Cursor/Cortex if they were open."
+      : `TUN failed (${tun.error || "unknown"}); fallback HTTP proxy + TCP relay 127.0.0.1:${
           forwards[0] && forwards[0].localPort
-        }. Re-run proxy on as Admin, or accept UAC.`,
+        }.`,
   };
 }
 
