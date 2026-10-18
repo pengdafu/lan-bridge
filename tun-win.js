@@ -35,21 +35,22 @@ function socksTarget(cfg) {
 function writeSingBoxConfig(cfg) {
   const t = socksTarget(cfg);
   fs.mkdirSync(TUN_DIR, { recursive: true });
-  // 192.168 + loopback + Mac proxy host stay DIRECT (avoid TUN routing loop).
-  // Everything else (incl. 10.0.0.0/8 company intranet + public) → Mac SOCKS.
+  // gost SOCKS5 has NO UDP ASSOCIATE — never send DNS UDP through "mac".
+  // FakeIP: answer DNS locally, dial SOCKS with domain (Mac resolves company DNS).
+  // 192.168 + loopback + Mac host stay DIRECT (avoid TUN loop).
   const config = {
     log: { level: "info", timestamp: true },
     dns: {
       servers: [
         {
-          type: "udp",
-          tag: "dns-mac",
-          server: "8.8.8.8",
-          detour: "mac",
+          type: "fakeip",
+          tag: "fakeip",
+          inet4_range: "198.18.0.0/15",
         },
-        { type: "local", tag: "dns-local" },
+        { type: "local", tag: "local" },
       ],
-      final: "dns-mac",
+      rules: [{ query_type: ["A", "AAAA"], server: "fakeip" }],
+      final: "local",
       strategy: "ipv4_only",
     },
     inbounds: [
@@ -75,7 +76,7 @@ function writeSingBoxConfig(cfg) {
     ],
     route: {
       rules: [
-        { action: "sniff" },
+        { action: "sniff", timeout: "1s" },
         { protocol: "dns", action: "hijack-dns" },
         {
           ip_cidr: [`${t.host}/32`, "192.168.0.0/16", "127.0.0.0/8"],
@@ -84,7 +85,7 @@ function writeSingBoxConfig(cfg) {
       ],
       final: "mac",
       auto_detect_interface: true,
-      default_domain_resolver: "dns-local",
+      default_domain_resolver: "local",
     },
   };
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
