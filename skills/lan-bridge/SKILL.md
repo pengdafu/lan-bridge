@@ -115,6 +115,8 @@ Point app MySQL host to `127.0.0.1` port `13306` if routes are not elevated yet.
 
 ## Reboot
 
-PC Startup should run `scripts/start-all.cmd` (daemon + worker + hub).  
-Mac LaunchAgents: daemon + worker + socks; hub only if `hubRole=mac` (normally PC hosts hub).  
-After boot on PC: `lanbridge proxy on` if you need company intranet.
+PC Startup runs `scripts/start-all.cmd` → daemon + worker + hub + **`proxy on`** (HTTP proxy settings already persist in Windows registry; this restarts TCP relays).  
+Mac LaunchAgents: daemon + worker + socks; hub only if `hubRole=mac` (normally PC hosts hub).
+
+**Persist vs not:** WinINET proxy + User env `HTTP(S)_PROXY` + git GitLab proxy **survive reboot**. TCP relay process does **not** — startup re-runs `proxy on` for that.  
+To leave the LAN cleanly: `node lanbridge.js proxy off` (clears registry/env/git/routes/relay).
