@@ -142,6 +142,23 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // PAC for browsers (no auth; localhost / LAN only via bind)
+    if (method === "GET" && url.pathname === "/proxy.pac") {
+      const pacFile = path.join(ROOT, "proxy.pac");
+      if (!fs.existsSync(pacFile)) {
+        sendJson(res, 404, { ok: false, error: "proxy.pac missing; run lanbridge proxy on" });
+        return;
+      }
+      const body = fs.readFileSync(pacFile);
+      res.writeHead(200, {
+        "Content-Type": "application/x-ns-proxy-autoconfig",
+        "Content-Length": body.length,
+        "Cache-Control": "no-cache",
+      });
+      res.end(body);
+      return;
+    }
+
     if (!authorized(req, cfg)) {
       sendJson(res, 401, { ok: false, error: "unauthorized" });
       return;

@@ -72,20 +72,22 @@ Hub URL comes from config: `hubRole` + that peer's host + `hubPort` (8765).
 
 GitLab only via Mac (`gitlab_fetch` job).
 
-## Intranet proxy (Mac SOCKS → PC all egress)
+## Intranet proxy (Mac SOCKS → PC PAC split)
 
-Mac runs always-on SOCKS at login (`lanbridge-socks` / LaunchAgent `com.lanbridge.socks`, port 1080).
+Mac runs always-on SOCKS `:1080` + HTTP proxy `:1087` at login (`lanbridge-socks` / LaunchAgent `com.lanbridge.socks`).
 
-On **Windows PC** (ALL egress via Mac — best-effort system proxy):
+On **Windows PC** (default = safe PAC split, not full SOCKS):
 
 ```bash
-node lanbridge.js proxy on      # system SOCKS + env ALL_PROXY (+ WinHTTP if elevated)
+node lanbridge.js proxy on      # PAC: company + unresolvable → Mac; else DIRECT
 node lanbridge.js proxy status
 node lanbridge.js proxy off     # clear when leaving LAN
+# node lanbridge.js proxy on --all   # full SOCKS — often breaks browser; avoid
 ```
 
-GitLab-only git proxy is also set host-scoped when `proxy on`.  
-`proxy on` bypasses LAN + github.com so public git still works. Apps that ignore system proxy may still need TUN later.
+PAC is served at `http://127.0.0.1:8766/proxy.pac` (written by `proxy on`).  
+Covers `.futunn.com` / `.futuoa.com` / `.server.com` / etc., plus hosts that fail local DNS.  
+GitLab git proxy is set host-scoped. **Fully restart the browser** after `proxy on` so PAC reloads.
 
 ## Paths
 

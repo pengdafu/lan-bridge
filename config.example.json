@@ -12,5 +12,18 @@
   },
   "inbox": "inbox",
   "outbox": "outbox",
-  "socks": { "host": "192.168.31.92", "port": 1080 }
+  "socks": {
+    "host": "192.168.31.92",
+    "port": 1080,
+    "httpPort": 1087,
+    "domains": [
+      ".futunn.com",
+      ".futu5.com",
+      ".futuhk.com",
+      ".futusam.com",
+      ".futuoa.com",
+      ".server.com",
+      ".fc.local"
+    ]
+  }
 }

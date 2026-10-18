@@ -29,7 +29,7 @@ Usage:
   lanbridge say <peer> <text> [--expect-reply]
   lanbridge inbox                # read unread agent mailbox (no wait)
   lanbridge watch [--timeout 60] # ONLY if human asked you to wait
-  lanbridge proxy on|off|status  # Windows: ALL egress via Mac SOCKS
+  lanbridge proxy on|off|status [--all]  # Windows: PAC company→Mac (default); --all = full SOCKS (may break browser)
   lanbridge doctor
 
 Anti-deadlock: never both agents park. Prefer say+inbox over watch.
@@ -396,8 +396,9 @@ async function cmdProxy(cfg, args) {
     );
     process.exit(1);
   }
+  const all = args.includes("--all");
   let result;
-  if (sub === "on") result = await proxyWin.proxyOn(cfg);
+  if (sub === "on") result = await proxyWin.proxyOn(cfg, { all });
   else if (sub === "off") result = await proxyWin.proxyOff(cfg);
   else if (sub === "status") result = await proxyWin.proxyStatus(cfg);
   else {

@@ -1,6 +1,6 @@
 {
   "name": "lan-bridge",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "private": true,
   "description": "PC↔Mac LAN file + job + agent meet hub",
   "main": "daemon.js",
