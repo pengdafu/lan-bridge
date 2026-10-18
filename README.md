@@ -7,7 +7,8 @@ Canonical PC↔Mac LAN bridge (shared codebase).
 - **File plane** (`:8766`): sandboxed inbox push/pull
 - **Job plane** (same port): `locate` | `fetch_path` | `gitlab_fetch` | `agent_prompt`
 - **Meet hub** (`:8765`, hosted by `hubRole`, default `pc`): WebSocket presence + **durable mailbox**
-- **GitLab**: Mac only (SSH to `gitlab.futunn.com`). PC uses `lanbridge gitlab ...` which creates a job on Mac.
+- **Intranet egress**: Windows `lanbridge proxy on` → all HTTP(S) via Mac `:1087`. Prefer **PC `git`/`curl` to GitLab** after proxy on.
+- **`lanbridge gitlab`**: fallback Mac `gitlab_fetch` job (proxy off / Mac-only SSH).
 
 ## Anti-deadlock
 
@@ -16,7 +17,8 @@ Agents must **not** both park waiting for WS replies.
 - `lanbridge say` = fire-and-forget into mailbox
 - `lanbridge inbox` = read unread (no wait)
 - `lanbridge watch` = optional, **one side only**, only when human asks to wait
-- Real work → `ask` / `locate` / `gitlab` jobs (poll job status, not mutual chat wait)
+- Real work → `ask` / `locate` jobs (poll job status, not mutual chat wait)
+- Company GitLab → `proxy on` + PC git (not `lanbridge gitlab` by default)
 
 ## Git remote (canonical)
 
@@ -53,8 +55,9 @@ node lanbridge.js send <file> <peer>
 node lanbridge.js pull <peer>:<relpath>
 node lanbridge.js locate <peer> <query>
 node lanbridge.js ask <peer> "<prompt>"
-node lanbridge.js gitlab <repo> <path> [--ref main]
+node lanbridge.js proxy on|off|status   # Windows: ALL via Mac (default)
 node lanbridge.js doctor
+# fallback: node lanbridge.js gitlab <repo> <path> [--ref main]
 ```
 
 Quick two-agent link (no mutual wait):
