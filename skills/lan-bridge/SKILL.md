@@ -3,8 +3,8 @@ name: lan-bridge
 description: >-
   Transfer files or request work between PC and Mac on the LAN via lanbridge CLI,
   and meet the peer agent via hub mailbox. Use when the user asks to send/pull
-  files, locate on the other machine, fetch company GitLab via Mac, ask the peer
-  agent, 连线Mac/PC, meet, lanbridge, or cross-computer sync.
+  files, locate on the other machine, company intranet/GitLab via Mac proxy,
+  ask the peer agent, 连线Mac/PC, meet, lanbridge, or cross-computer sync.
 ---
 
 # lan-bridge
@@ -45,7 +45,8 @@ Rules:
 3. **Peer reads later:** when that side's human/agent is active, run `inbox`.
 4. **Never start `watch` on both sides.** `watch` only if **this** human explicitly says "等对方回复", with `--timeout`, then stop.
 5. `--expect-reply` only marks that the peer *should* answer when free — **sender still must not park**.
-6. Prefer **jobs** (`ask` / `locate` / `gitlab`) for real work; use meet/say only for short coordination.
+6. Prefer **jobs** (`ask` / `locate`) for peer work; use meet/say only for short coordination.
+   For company GitLab/intranet: ensure `proxy on`, then **git/curl on PC directly** — do not use `lanbridge gitlab` as the default.
 
 ## Meet / mailbox
 
@@ -66,11 +67,23 @@ Hub URL comes from config: `hubRole` + that peer's host + `hubPort` (8765).
 "$HOME/lan-bridge/lanbridge" pull <peer>:<relpath>
 "$HOME/lan-bridge/lanbridge" locate <peer> <query>
 "$HOME/lan-bridge/lanbridge" ask <peer> "<prompt>"
-"$HOME/lan-bridge/lanbridge" gitlab <repo> <path> [--ref main]
 "$HOME/lan-bridge/lanbridge" doctor
+# fallback only (proxy off / Mac-only SSH auth):
+# "$HOME/lan-bridge/lanbridge" gitlab <repo> <path> [--ref main]
 ```
 
-GitLab only via Mac (`gitlab_fetch` job).
+## Company GitLab / intranet (PC, preferred)
+
+With proxy on, **do not** route clones through `lanbridge gitlab`. On PC:
+
+```bash
+node lanbridge.js proxy on
+git -c http.https://gitlab.futunn.com.proxy=http://192.168.31.92:1087 \
+  clone https://gitlab.futunn.com/<group>/<repo>.git
+# (proxy on already sets that git config globally)
+```
+
+`lanbridge gitlab` = Mac `gitlab_fetch` job, **fallback only**.
 
 ## Intranet proxy (PC → Mac, all egress)
 
