@@ -1,8 +1,8 @@
 "use strict";
 /**
- * Windows proxy via Mac SOCKS.
- * Default: PAC split — only company domains via Mac; everything else DIRECT.
- * Full SOCKS-for-all breaks browsers on Windows; use --all only for experiments.
+ * Windows egress via Mac proxy.
+ * Default: ALL traffic via Mac HTTP :1087 (remote DNS) — covers all intranet,
+ * no per-domain whitelist. PAC split is opt-in via --pac.
  */
 const { spawnSync } = require("child_process");
 const fs = require("fs");
@@ -24,7 +24,9 @@ function socksTarget(cfg) {
     httpPort,
     url: `socks5://${host}:${port}`,
     httpUrl: `http://${host}:${httpPort}`,
-    ie: `socks=${host}:${port}`,
+    // IE/WinINET: HTTP proxy (not socks=) — browsers do remote DNS via CONNECT
+    ieHttp: `${host}:${httpPort}`,
+    ieSocks: `socks=${host}:${port}`,
   };
 }
 
@@ -50,8 +52,6 @@ function companySuffixes(cfg) {
 
 function writePac(cfg, t) {
   const domains = companySuffixes(cfg);
-  // Prefer HTTP proxy so browser sends hostname to Mac (remote DNS).
-  // Also: if PC DNS cannot resolve host → try Mac proxy (covers unknown intranet names).
   const checks = domains
     .map((d) => {
       const bare = d.startsWith(".") ? d.slice(1) : d;
@@ -66,18 +66,9 @@ function FindProxyForURL(url, host) {
   if (isPlainHostName(host) ||
       shExpMatch(host, "localhost") ||
       shExpMatch(host, "127.*") ||
-      shExpMatch(host, "10.*") ||
-      shExpMatch(host, "192.168.*") ||
-      shExpMatch(host, "172.16.*") ||
-      shExpMatch(host, "172.17.*") ||
-      shExpMatch(host, "172.18.*") ||
-      shExpMatch(host, "172.19.*") ||
-      shExpMatch(host, "172.2*.*") ||
-      shExpMatch(host, "172.30.*") ||
-      shExpMatch(host, "172.31.*")) {
+      shExpMatch(host, "192.168.*")) {
     return "DIRECT";
   }
-  // Never send public giants to Mac
   if (shExpMatch(host, "*.google.com") || shExpMatch(host, "google.com") ||
       shExpMatch(host, "*.github.com") || shExpMatch(host, "github.com") ||
       shExpMatch(host, "*.githubusercontent.com") ||
@@ -92,7 +83,6 @@ ${checks}
   ) {
     return "${via}";
   }
-  // Intranet names often NXDOMAIN on home router — try Mac
   if (!isResolvable(host)) {
     return "${via}";
   }
@@ -156,67 +146,79 @@ function setUserEnv(name, value) {
   }
 }
 
-async function proxyOn(cfg, { all = false } = {}) {
-  const t = socksTarget(cfg);
-  const up = await probeTcp(t.host, t.port);
-  if (!up) {
-    return {
-      ok: false,
-      error: `SOCKS not reachable ${t.host}:${t.port}. Is Mac lanbridge-socks running?`,
-      target: t,
-    };
-  }
-
-  // Always set host-scoped git for GitLab
+function setGitLabProxy(httpUrl) {
+  // HTTP proxy — Windows git/libcurl often fails socks5 with "Could not resolve proxy"
   spawnSync(
     "git",
-    ["config", "--global", "http.https://gitlab.futunn.com.proxy", t.url],
+    ["config", "--global", "http.https://gitlab.futunn.com.proxy", httpUrl],
     { encoding: "utf8" }
   );
+}
 
-  if (all) {
-    // Dangerous: full SOCKS — browsers often lose public net
-    const bypass = "localhost;127.*;10.*;192.168.*;<local>";
-    ps(`
-$path = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'
-Set-ItemProperty -Path $path -Name ProxyEnable -Value 1 -Type DWord
-Set-ItemProperty -Path $path -Name ProxyServer -Value '${t.ie}'
-Set-ItemProperty -Path $path -Name ProxyOverride -Value '${bypass}'
-Remove-ItemProperty -Path $path -Name AutoConfigURL -ErrorAction SilentlyContinue
-`);
-    refreshWinInet();
-    setUserEnv("ALL_PROXY", t.url);
-    setUserEnv("HTTPS_PROXY", t.url);
-    setUserEnv("HTTP_PROXY", t.url);
+/**
+ * @param {object} cfg
+ * @param {{ pac?: boolean }} [opts]  pac=true → split tunnel; default = all via Mac
+ */
+async function proxyOn(cfg, { pac = false } = {}) {
+  const t = socksTarget(cfg);
+  const upHttp = await probeTcp(t.host, t.httpPort);
+  const upSocks = await probeTcp(t.host, t.port);
+  if (!upHttp && !upSocks) {
     return {
-      ok: true,
-      mode: "all-socks",
-      warning: "ALL traffic via SOCKS — public sites may break. Prefer default PAC mode.",
+      ok: false,
+      error: `Mac proxy not reachable ${t.host}:${t.httpPort}/:${t.port}. Is lanbridge-socks running?`,
       target: t,
     };
   }
 
-  // Safe default: PAC split tunnel
-  const pac = writePac(cfg, t);
-  ps(`
+  setGitLabProxy(t.httpUrl);
+
+  if (pac) {
+    const pacInfo = writePac(cfg, t);
+    ps(`
 $path = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'
 Set-ItemProperty -Path $path -Name ProxyEnable -Value 0 -Type DWord
 Remove-ItemProperty -Path $path -Name ProxyServer -ErrorAction SilentlyContinue
-Set-ItemProperty -Path $path -Name AutoConfigURL -Value '${pac.url}'
+Set-ItemProperty -Path $path -Name AutoConfigURL -Value '${pacInfo.url}'
+`);
+    refreshWinInet();
+    setUserEnv("ALL_PROXY", "");
+    setUserEnv("HTTPS_PROXY", "");
+    setUserEnv("HTTP_PROXY", "");
+    setUserEnv("all_proxy", "");
+    return {
+      ok: true,
+      mode: "pac-split",
+      target: t,
+      pac: pacInfo.url,
+      note: "Split tunnel. Prefer default (no --pac) for full intranet.",
+    };
+  }
+
+  // Default: ALL HTTP(S) via Mac. Do NOT bypass 10.* — that is company intranet.
+  // Only keep home LAN + loopback direct so lan-bridge / printer still work.
+  const bypass = "localhost;127.*;192.168.*;<local>";
+  ps(`
+$path = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'
+Set-ItemProperty -Path $path -Name ProxyEnable -Value 1 -Type DWord
+Set-ItemProperty -Path $path -Name ProxyServer -Value '${t.ieHttp}'
+Set-ItemProperty -Path $path -Name ProxyOverride -Value '${bypass}'
+Remove-ItemProperty -Path $path -Name AutoConfigURL -ErrorAction SilentlyContinue
 `);
   refreshWinInet();
-  // Do NOT set global ALL_PROXY (would break public curl/npm)
-  setUserEnv("ALL_PROXY", "");
-  setUserEnv("HTTPS_PROXY", "");
-  setUserEnv("HTTP_PROXY", "");
-  setUserEnv("all_proxy", "");
+  setUserEnv("HTTP_PROXY", t.httpUrl);
+  setUserEnv("HTTPS_PROXY", t.httpUrl);
+  setUserEnv("ALL_PROXY", t.url);
+  setUserEnv("all_proxy", t.url);
+  setUserEnv("NO_PROXY", "localhost,127.0.0.1,192.168.0.0/16");
+  setUserEnv("no_proxy", "localhost,127.0.0.1,192.168.0.0/16");
 
   return {
     ok: true,
-    mode: "pac-split",
+    mode: "all-via-mac",
     target: t,
-    pac: pac.url,
-    note: "Company domains via Mac SOCKS; other sites DIRECT. Restart browser if needed.",
+    note:
+      "All browser/HTTP(S)/git via Mac. Restart browser once. Raw TCP (MySQL) still needs Mac reachability or a TUN later.",
   };
 }
 
@@ -233,6 +235,8 @@ Remove-ItemProperty -Path $path -Name AutoConfigURL -ErrorAction SilentlyContinu
   setUserEnv("HTTPS_PROXY", "");
   setUserEnv("HTTP_PROXY", "");
   setUserEnv("all_proxy", "");
+  setUserEnv("NO_PROXY", "");
+  setUserEnv("no_proxy", "");
   spawnSync("git", ["config", "--global", "--unset", "http.https://gitlab.futunn.com.proxy"], {
     encoding: "utf8",
   });
@@ -241,20 +245,24 @@ Remove-ItemProperty -Path $path -Name AutoConfigURL -ErrorAction SilentlyContinu
 
 async function proxyStatus(cfg) {
   const t = socksTarget(cfg);
-  const reachable = await probeTcp(t.host, t.port);
+  const reachable = {
+    http: await probeTcp(t.host, t.httpPort),
+    socks: await probeTcp(t.host, t.port),
+  };
   const ie = ps(`
 $path = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'
 $p = Get-ItemProperty $path
-\"enable=$($p.ProxyEnable) server=$($p.ProxyServer) pac=$($p.AutoConfigURL)\"
+\"enable=$($p.ProxyEnable) server=$($p.ProxyServer) pac=$($p.AutoConfigURL) bypass=$($p.ProxyOverride)\"
 `);
   return {
     ok: true,
     target: t,
-    socksReachable: reachable,
+    reachable,
     ie: ie.out,
     env: {
       ALL_PROXY: process.env.ALL_PROXY || null,
       HTTPS_PROXY: process.env.HTTPS_PROXY || null,
+      HTTP_PROXY: process.env.HTTP_PROXY || null,
     },
   };
 }
