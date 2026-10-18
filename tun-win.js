@@ -173,7 +173,29 @@ async function ensureSingBox(cfg) {
   return { ok: true, path: SING_BOX, downloaded: true };
 }
 
+function findSingBoxPid() {
+  const r = spawnSync(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-Command",
+      "(Get-Process sing-box -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Id)",
+    ],
+    { encoding: "utf8" }
+  );
+  const pid = Number((r.stdout || "").trim());
+  return pid || false;
+}
+
 function isTunRunning() {
+  const live = findSingBoxPid();
+  if (live) {
+    try {
+      fs.mkdirSync(TUN_DIR, { recursive: true });
+      fs.writeFileSync(PID_FILE, String(live));
+    } catch {}
+    return live;
+  }
   try {
     if (!fs.existsSync(PID_FILE)) return false;
     const pid = Number(fs.readFileSync(PID_FILE, "utf8").trim());
@@ -211,61 +233,44 @@ function taskExists() {
   return r.status === 0;
 }
 
-function writeRunTunCmd() {
-  const runCmd = path.join(TUN_DIR, "run-tun.cmd");
-  fs.writeFileSync(
-    runCmd,
-    [
-      "@echo off",
-      `cd /d "${ROOT}"`,
-      "taskkill /F /IM sing-box.exe >nul 2>&1",
-      `del /f /q "${PID_FILE}" >nul 2>&1`,
-      `start /b "" "${SING_BOX}" run -c "${CONFIG_PATH}" > "${LOG_FILE}" 2>&1`,
-      "timeout /t 1 /nobreak >nul",
-      `for /f "tokens=2 delims=," %%a in ('tasklist /FI "IMAGENAME eq sing-box.exe" /FO CSV /NH') do (echo %%~a>"${PID_FILE}" & goto :done)`,
-      ":done",
-    ].join("\r\n")
-  );
-  return runCmd;
-}
-
 /**
- * One-time Admin install: scheduled task with highest privileges.
- * After this, `startTun` can launch without UAC each time.
+ * One-time Admin install: scheduled task runs sing-box.exe with Highest privileges.
+ * After this, `startTun` / schtasks /Run needs no UAC.
  */
 async function installTunTask(cfg) {
   const ensured = await ensureSingBox(cfg);
   if (!ensured.ok) return ensured;
   writeSingBoxConfig(cfg);
   fs.mkdirSync(TUN_DIR, { recursive: true });
-  const runCmd = writeRunTunCmd();
 
   const installPs1 = path.join(TUN_DIR, "install-task.ps1");
-  // Use single-quoted paths in PS to avoid escape hell
+  const exeEsc = SING_BOX.replace(/'/g, "''");
+  const cfgEsc = CONFIG_PATH.replace(/'/g, "''");
+  const workEsc = ROOT.replace(/'/g, "''");
   fs.writeFileSync(
     installPs1,
-    `
-$ErrorActionPreference = 'Stop'
-$taskName = '${TASK_NAME}'
-$runCmd = '${runCmd.replace(/'/g, "''")}'
-$action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument ("/c `"" + $runCmd + "`"")
-$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
-Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings | Out-Null
-Write-Output "INSTALLED"
-`
+    [
+      "$ErrorActionPreference = 'Stop'",
+      `$taskName = '${TASK_NAME}'`,
+      `$exe = '${exeEsc}'`,
+      `$cfg = '${cfgEsc}'`,
+      `$work = '${workEsc}'`,
+      "$action = New-ScheduledTaskAction -Execute $exe -Argument ('run -c \"' + $cfg + '\"') -WorkingDirectory $work",
+      "$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest",
+      "$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero)",
+      "Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue",
+      "Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings | Out-Null",
+      "Write-Output 'INSTALLED'",
+    ].join("\r\n")
   );
 
+  const escapedInstall = installPs1.replace(/'/g, "''");
   const r = spawnSync(
     "powershell.exe",
     [
       "-NoProfile",
       "-Command",
-      `Start-Process powershell -Verb RunAs -Wait -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File','${installPs1.replace(
-        /'/g,
-        "''"
-      )}')`,
+      `Start-Process powershell -Verb RunAs -Wait -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File','${escapedInstall}')`,
     ],
     { encoding: "utf8", timeout: 180000 }
   );
@@ -274,11 +279,20 @@ Write-Output "INSTALLED"
     return {
       ok: false,
       error:
-        "Scheduled task install failed — accept the UAC prompt, or right-click scripts\\install-tun-task.cmd → Run as administrator. " +
+        "Scheduled task install failed — accept UAC, or Run as admin: scripts\\install-tun-task.cmd. " +
         ((r.stderr || r.stdout || "").trim() || ""),
     };
   }
-  return { ok: true, task: TASK_NAME, downloaded: ensured.downloaded, runCmd };
+  // Verify task points at sing-box.exe
+  const q = spawnSync("schtasks", ["/Query", "/TN", TASK_NAME, "/V", "/FO", "LIST"], {
+    encoding: "utf8",
+  });
+  return {
+    ok: true,
+    task: TASK_NAME,
+    downloaded: ensured.downloaded,
+    taskToRun: ((q.stdout || "").match(/Task To Run:\s*(.+)/) || [])[1] || null,
+  };
 }
 
 /**
@@ -307,7 +321,6 @@ async function startTun(cfg) {
     }
   }
 
-  writeRunTunCmd();
   const start = spawnSync("schtasks", ["/Run", "/TN", TASK_NAME], { encoding: "utf8" });
   for (let i = 0; i < 40; i++) {
     const pid = isTunRunning();
@@ -326,15 +339,17 @@ async function startTun(cfg) {
     });
   }
 
-  let logTail = "";
-  try {
-    logTail = fs.readFileSync(LOG_FILE, "utf8").slice(-800);
-  } catch {}
+  const q = spawnSync("schtasks", ["/Query", "/TN", TASK_NAME, "/V", "/FO", "LIST"], {
+    encoding: "utf8",
+  });
+  const lastResult = ((q.stdout || "").match(/Last Result:\s*(\S+)/) || [])[1];
   return {
     ok: false,
     error:
-      "TUN start failed after task run. " +
-      ((start.stderr || start.stdout || "").trim() || logTail || "no log"),
+      "TUN start failed after task run (Last Result=" +
+      (lastResult || "?") +
+      "). Re-run: node lanbridge.js tun install  then accept UAC. " +
+      ((start.stderr || start.stdout || "").trim() || ""),
     configPath: written.configPath,
   };
 }
