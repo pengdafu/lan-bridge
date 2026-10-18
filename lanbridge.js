@@ -29,11 +29,14 @@ Usage:
   lanbridge say <peer> <text> [--expect-reply]
   lanbridge inbox                # read unread agent mailbox (no wait)
   lanbridge watch [--timeout 60] # ONLY if human asked you to wait
+  lanbridge proxy on|off|status  # Windows: ALL egress via Mac SOCKS
   lanbridge doctor
 
 Anti-deadlock: never both agents park. Prefer say+inbox over watch.
 `);
 }
+
+const proxyWin = require("./proxy-win");
 
 function hubBase(cfg) {
   const host =
@@ -378,6 +381,33 @@ async function cmdWatch(cfg, args) {
   process.exit(1);
 }
 
+async function cmdProxy(cfg, args) {
+  const sub = (args[0] || "").toLowerCase();
+  if (process.platform !== "win32") {
+    console.log(
+      JSON.stringify(
+        {
+          ok: false,
+          error: "lanbridge proxy on|off is Windows-only. On Mac use lanbridge-socks start|stop|status",
+        },
+        null,
+        2
+      )
+    );
+    process.exit(1);
+  }
+  let result;
+  if (sub === "on") result = await proxyWin.proxyOn(cfg);
+  else if (sub === "off") result = await proxyWin.proxyOff(cfg);
+  else if (sub === "status") result = await proxyWin.proxyStatus(cfg);
+  else {
+    usage();
+    process.exit(1);
+  }
+  console.log(JSON.stringify(result, null, 2));
+  if (!result.ok) process.exit(1);
+}
+
 async function cmdDoctor(cfg) {
   const report = { checks: [] };
   const push = (name, ok, detail) => report.checks.push({ name, ok, detail });
@@ -394,6 +424,12 @@ async function cmdDoctor(cfg) {
     push("hub", h.status === 200, h.json);
   } catch (e) {
     push("hub", false, String(e.message || e));
+  }
+  try {
+    const st = await proxyWin.proxyStatus(cfg);
+    push("mac_socks", !!st.socksReachable, st.target);
+  } catch (e) {
+    push("mac_socks", false, String(e.message || e));
   }
   for (const name of Object.keys(cfg.peers)) {
     if (name === cfg.role) continue;
@@ -456,6 +492,9 @@ async function main() {
       break;
     case "watch":
       await cmdWatch(cfg, args);
+      break;
+    case "proxy":
+      await cmdProxy(cfg, args);
       break;
     case "doctor":
       await cmdDoctor(cfg);

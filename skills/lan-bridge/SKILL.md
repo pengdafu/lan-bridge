@@ -72,6 +72,21 @@ Hub URL comes from config: `hubRole` + that peer's host + `hubPort` (8765).
 
 GitLab only via Mac (`gitlab_fetch` job).
 
+## Intranet proxy (Mac SOCKS → PC all egress)
+
+Mac runs always-on SOCKS at login (`lanbridge-socks` / LaunchAgent `com.lanbridge.socks`, port 1080).
+
+On **Windows PC** (ALL egress via Mac — best-effort system proxy):
+
+```bash
+node lanbridge.js proxy on      # system SOCKS + env ALL_PROXY (+ WinHTTP if elevated)
+node lanbridge.js proxy status
+node lanbridge.js proxy off     # clear when leaving LAN
+```
+
+GitLab-only git proxy is also set host-scoped when `proxy on`.  
+`proxy on` bypasses LAN + github.com so public git still works. Apps that ignore system proxy may still need TUN later.
+
 ## Paths
 
 - Code root: `~/lan-bridge` (Windows: `%USERPROFILE%\lan-bridge`)
@@ -81,4 +96,5 @@ GitLab only via Mac (`gitlab_fetch` job).
 ## Reboot
 
 PC Startup should run `scripts/start-all.cmd` (daemon + worker + hub).  
-Mac LaunchAgents: daemon + worker; hub only if `hubRole=mac` (normally PC hosts hub).
+Mac LaunchAgents: daemon + worker + socks; hub only if `hubRole=mac` (normally PC hosts hub).  
+After boot on PC: `lanbridge proxy on` if you need company intranet.
