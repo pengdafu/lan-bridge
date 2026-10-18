@@ -9,6 +9,10 @@ mailbox-cursors/
 config.json
 proxy.pac
 *.log
+bin/sing-box.exe
+bin/sing-box.zip
+bin/sing-box-extract/
+tun/
 *.partial
 .DS_Store
 .cursor_api_key

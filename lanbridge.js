@@ -29,7 +29,8 @@ Usage:
   lanbridge say <peer> <text> [--expect-reply]
   lanbridge inbox                # read unread agent mailbox (no wait)
   lanbridge watch [--timeout 60] # ONLY if human asked you to wait
-  lanbridge proxy on|off|status [--pac]  # Windows: default ALL via Mac HTTP; --pac = company-only split
+  lanbridge proxy on|off|status [--pac]  # Windows: TUN→Mac SOCKS (default); --pac = HTTP split only
+  lanbridge tun install                  # Windows one-time Admin: scheduled task for TUN (no UAC later)
   lanbridge doctor
 
 Anti-deadlock: never both agents park. Prefer say+inbox over watch.
@@ -498,6 +499,25 @@ async function main() {
     case "proxy":
       await cmdProxy(cfg, args);
       break;
+    case "tun": {
+      if (process.platform !== "win32") {
+        console.log(JSON.stringify({ ok: false, error: "tun is Windows-only" }, null, 2));
+        process.exit(1);
+      }
+      const tunWin = require("./tun-win");
+      const sub = (args[0] || "").toLowerCase();
+      let result;
+      if (sub === "install") result = await tunWin.installTunTask(cfg);
+      else if (sub === "status") result = { ok: true, ...tunWin.tunStatus() };
+      else if (sub === "stop") result = tunWin.stopTun();
+      else {
+        usage();
+        process.exit(1);
+      }
+      console.log(JSON.stringify(result, null, 2));
+      if (!result.ok) process.exit(1);
+      break;
+    }
     case "doctor":
       await cmdDoctor(cfg);
       break;

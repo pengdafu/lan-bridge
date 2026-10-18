@@ -85,27 +85,25 @@ git -c http.https://gitlab.futunn.com.proxy=http://192.168.31.92:1087 \
 
 `lanbridge gitlab` = Mac `gitlab_fetch` job, **fallback only**.
 
-## Intranet proxy (PC → Mac, all egress)
+## Intranet proxy (PC → Mac, TUN = real global)
 
-Mac runs always-on SOCKS `:1080` + HTTP `:1087` at login (`lanbridge-socks` / LaunchAgent `com.lanbridge.socks`).
+Mac runs always-on SOCKS `:1080` + HTTP `:1087` at login (`lanbridge-socks`).
 
-On **Windows PC** — **default = ALL browser/HTTP(S)/git via Mac** (no domain whitelist):
+On **Windows PC**:
 
 ```bash
-node lanbridge.js proxy on       # ALL via Mac HTTP :1087 (recommended)
+node lanbridge.js proxy on       # sing-box TUN → Mac SOCKS (UAC once) + HTTP backup
 node lanbridge.js proxy status
-node lanbridge.js proxy off      # clear when leaving LAN
-# node lanbridge.js proxy on --pac   # optional split tunnel only
+node lanbridge.js proxy off      # clear TUN + WinINET + relays
+# node lanbridge.js proxy on --pac   # optional HTTP PAC only (no TUN)
 ```
 
-Bypass only home LAN (`192.168.*` / localhost) — **does not bypass `10.*`**.
+**TUN (一劳永逸):**
+1. **Once (Admin):** `scripts\\install-tun-task.cmd` or `node lanbridge.js tun install` — accept UAC; creates task `LanBridgeTun`.
+2. **Each time you need intranet:** `node lanbridge.js proxy on` — starts TUN **without** UAC; all traffic except `192.168.*` / loopback / Mac IP → Mac SOCKS (browser, Node, Electron Agent, MySQL, …).
+3. Fallback if TUN missing: WinINET HTTP + TCP relay `127.0.0.1:13306`.
 
-**TCP (MySQL etc.)** — `proxy on` also:
-1. Starts local SOCKS TCP relays (`socks.tcpForwards`, default MySQL `127.0.0.1:13306` → `10.2.18.2:3306`)
-2. Tries `route add 10.0.0.0/8 via Mac` (needs **Admin** PowerShell); Mac must run `scripts/mac-enable-lan-forward.sh` once
-
-Point app MySQL host to `127.0.0.1` port `13306` if routes are not elevated yet.  
-**Fully restart the browser** after `proxy on`.
+**Restart Cortex / terminals after `proxy on`.**
 
 ## Paths
 

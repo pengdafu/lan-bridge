@@ -1,14 +1,15 @@
 "use strict";
 /**
  * Windows egress via Mac proxy.
- * Default: ALL HTTP(S) via Mac :1087 + TCP via SOCKS relay / 10/8 routes.
- * PAC split is opt-in via --pac.
+ * Default: sing-box TUN (all TCP/UDP via Mac SOCKS) + WinINET HTTP backup.
+ * PAC split is opt-in via --pac. TUN needs Admin UAC once per `proxy on`.
  */
 const { spawnSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const net = require("net");
 const tcpRelay = require("./tcp-relay");
+const tunWin = require("./tun-win");
 
 const ROOT = __dirname;
 
@@ -259,26 +260,35 @@ Remove-ItemProperty -Path $path -Name AutoConfigURL -ErrorAction SilentlyContinu
   setUserEnv("NO_PROXY", "localhost,127.0.0.1,192.168.0.0/16");
   setUserEnv("no_proxy", "localhost,127.0.0.1,192.168.0.0/16");
 
-  // Raw TCP: SOCKS local forwards (works without admin) + optional 10/8 routes (admin + Mac forward)
+  // TUN first (true global). Fallback: TCP SOCKS relays + optional route add.
+  let tun = { ok: false, skipped: true };
+  try {
+    tun = await tunWin.startTun(cfg);
+  } catch (e) {
+    tun = { ok: false, error: String(e && e.message ? e.message : e) };
+  }
   const relay = tcpRelay.startRelayDetached();
   const routes = addTcpRoutes(cfg, t.host);
-  const routesOk = routes.some((x) => x.ok);
   const forwards = tcpRelay.defaultForwards(cfg);
 
   return {
     ok: true,
-    mode: "all-via-mac",
+    mode: tun.ok ? "tun-via-mac" : "all-via-mac",
     target: t,
+    tun,
     tcpRelay: relay,
     tcpForwards: forwards,
     tcpRoutes: routes,
-    note: routesOk
-      ? "HTTP(S)+TCP routes via Mac. Restart browser. Ensure Mac ran scripts/mac-enable-lan-forward.sh"
-      : `HTTP(S) via Mac. TCP via local SOCKS relays (e.g. MySQL → 127.0.0.1:${forwards[0] && forwards[0].localPort}). Route add needs Admin; Mac needs IP forward.`,
+    note: tun.ok
+      ? "TUN up: Node/Electron/MySQL/browser all via Mac SOCKS. Accept UAC if prompted. Restart Cortex after proxy on."
+      : `TUN failed (${tun.error || "unknown"}); fallback HTTP+TCP relay 127.0.0.1:${
+          forwards[0] && forwards[0].localPort
+        }. Re-run proxy on as Admin, or accept UAC.`,
   };
 }
 
 async function proxyOff(cfg) {
+  const tun = tunWin.stopTun();
   ps(`
 $path = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'
 Set-ItemProperty -Path $path -Name ProxyEnable -Value 0 -Type DWord
@@ -298,7 +308,7 @@ Remove-ItemProperty -Path $path -Name AutoConfigURL -ErrorAction SilentlyContinu
   });
   const relay = tcpRelay.stopRelay();
   const routes = delTcpRoutes(cfg);
-  return { ok: true, mode: "off", tcpRelay: relay, tcpRoutes: routes };
+  return { ok: true, mode: "off", tun, tcpRelay: relay, tcpRoutes: routes };
 }
 
 async function proxyStatus(cfg) {
@@ -317,6 +327,7 @@ $p = Get-ItemProperty $path
     target: t,
     reachable,
     ie: ie.out,
+    tun: tunWin.tunStatus(),
     tcpRelayPid: tcpRelay.isRunning() || null,
     tcpForwards: tcpRelay.defaultForwards(cfg),
     env: {
