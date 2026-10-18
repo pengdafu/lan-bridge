@@ -98,8 +98,14 @@ node lanbridge.js proxy off      # clear when leaving LAN
 # node lanbridge.js proxy on --pac   # optional split tunnel only
 ```
 
-Bypass only home LAN (`192.168.*` / localhost) — **does not bypass `10.*`** (company intranet IPs).  
-**Fully restart the browser** after `proxy on`. Raw TCP (e.g. MySQL) is not covered by HTTP proxy.
+Bypass only home LAN (`192.168.*` / localhost) — **does not bypass `10.*`**.
+
+**TCP (MySQL etc.)** — `proxy on` also:
+1. Starts local SOCKS TCP relays (`socks.tcpForwards`, default MySQL `127.0.0.1:13306` → `10.2.18.2:3306`)
+2. Tries `route add 10.0.0.0/8 via Mac` (needs **Admin** PowerShell); Mac must run `scripts/mac-enable-lan-forward.sh` once
+
+Point app MySQL host to `127.0.0.1` port `13306` if routes are not elevated yet.  
+**Fully restart the browser** after `proxy on`.
 
 ## Paths
 

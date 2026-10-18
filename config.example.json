@@ -16,6 +16,10 @@
     "host": "192.168.31.92",
     "port": 1080,
     "httpPort": 1087,
+    "tcpCidrs": ["10.0.0.0/8"],
+    "tcpForwards": [
+      { "localPort": 13306, "host": "10.2.18.2", "port": 3306 }
+    ],
     "domains": [
       ".futunn.com",
       ".futu5.com",

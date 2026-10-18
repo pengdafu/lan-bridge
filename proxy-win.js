@@ -1,15 +1,61 @@
 "use strict";
 /**
  * Windows egress via Mac proxy.
- * Default: ALL traffic via Mac HTTP :1087 (remote DNS) — covers all intranet,
- * no per-domain whitelist. PAC split is opt-in via --pac.
+ * Default: ALL HTTP(S) via Mac :1087 + TCP via SOCKS relay / 10/8 routes.
+ * PAC split is opt-in via --pac.
  */
 const { spawnSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const net = require("net");
+const tcpRelay = require("./tcp-relay");
 
 const ROOT = __dirname;
+
+/** @returns {string[]} CIDRs to route via Mac for raw TCP (needs admin + Mac IP forward) */
+function tcpCidrs(cfg) {
+  return (cfg.socks && cfg.socks.tcpCidrs) || ["10.0.0.0/8"];
+}
+
+function parseCidr(cidr) {
+  const [ip, bitsStr] = cidr.split("/");
+  const bits = Number(bitsStr || 32);
+  const maskNum = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
+  const mask = [
+    (maskNum >>> 24) & 255,
+    (maskNum >>> 16) & 255,
+    (maskNum >>> 8) & 255,
+    maskNum & 255,
+  ].join(".");
+  return { dest: ip, mask };
+}
+
+function addTcpRoutes(cfg, gateway) {
+  const results = [];
+  for (const cidr of tcpCidrs(cfg)) {
+    const { dest, mask } = parseCidr(cidr);
+    // delete existing then add (idempotent-ish)
+    spawnSync("route", ["delete", dest], { encoding: "utf8" });
+    const r = spawnSync("route", ["add", dest, "mask", mask, gateway], { encoding: "utf8" });
+    results.push({
+      cidr,
+      gateway,
+      ok: r.status === 0,
+      out: ((r.stdout || "") + (r.stderr || "")).trim(),
+    });
+  }
+  return results;
+}
+
+function delTcpRoutes(cfg) {
+  const results = [];
+  for (const cidr of tcpCidrs(cfg)) {
+    const { dest } = parseCidr(cidr);
+    const r = spawnSync("route", ["delete", dest], { encoding: "utf8" });
+    results.push({ cidr, ok: r.status === 0, out: ((r.stdout || "") + (r.stderr || "")).trim() });
+  }
+  return results;
+}
 
 function socksTarget(cfg) {
   const host =
@@ -213,12 +259,22 @@ Remove-ItemProperty -Path $path -Name AutoConfigURL -ErrorAction SilentlyContinu
   setUserEnv("NO_PROXY", "localhost,127.0.0.1,192.168.0.0/16");
   setUserEnv("no_proxy", "localhost,127.0.0.1,192.168.0.0/16");
 
+  // Raw TCP: SOCKS local forwards (works without admin) + optional 10/8 routes (admin + Mac forward)
+  const relay = tcpRelay.startRelayDetached();
+  const routes = addTcpRoutes(cfg, t.host);
+  const routesOk = routes.some((x) => x.ok);
+  const forwards = tcpRelay.defaultForwards(cfg);
+
   return {
     ok: true,
     mode: "all-via-mac",
     target: t,
-    note:
-      "All browser/HTTP(S)/git via Mac. Restart browser once. Raw TCP (MySQL) still needs Mac reachability or a TUN later.",
+    tcpRelay: relay,
+    tcpForwards: forwards,
+    tcpRoutes: routes,
+    note: routesOk
+      ? "HTTP(S)+TCP routes via Mac. Restart browser. Ensure Mac ran scripts/mac-enable-lan-forward.sh"
+      : `HTTP(S) via Mac. TCP via local SOCKS relays (e.g. MySQL → 127.0.0.1:${forwards[0] && forwards[0].localPort}). Route add needs Admin; Mac needs IP forward.`,
   };
 }
 
@@ -240,7 +296,9 @@ Remove-ItemProperty -Path $path -Name AutoConfigURL -ErrorAction SilentlyContinu
   spawnSync("git", ["config", "--global", "--unset", "http.https://gitlab.futunn.com.proxy"], {
     encoding: "utf8",
   });
-  return { ok: true, mode: "off" };
+  const relay = tcpRelay.stopRelay();
+  const routes = delTcpRoutes(cfg);
+  return { ok: true, mode: "off", tcpRelay: relay, tcpRoutes: routes };
 }
 
 async function proxyStatus(cfg) {
@@ -259,6 +317,8 @@ $p = Get-ItemProperty $path
     target: t,
     reachable,
     ie: ie.out,
+    tcpRelayPid: tcpRelay.isRunning() || null,
+    tcpForwards: tcpRelay.defaultForwards(cfg),
     env: {
       ALL_PROXY: process.env.ALL_PROXY || null,
       HTTPS_PROXY: process.env.HTTPS_PROXY || null,
@@ -267,4 +327,4 @@ $p = Get-ItemProperty $path
   };
 }
 
-module.exports = { proxyOn, proxyOff, proxyStatus, socksTarget };
+module.exports = { proxyOn, proxyOff, proxyStatus, socksTarget, addTcpRoutes, delTcpRoutes };
